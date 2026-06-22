@@ -40,8 +40,28 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install checkov
-      - name: Scan CloudFormation template
-        run: checkov -f infra/cloudformation.yaml --compact
+      - name: Scan all IaC (CloudFormation + Terraform)
+        run: checkov -d infra --skip-path infra/terraform/.terraform --compact
+
+  terraform:
+    name: Terraform validate + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Format check
+        run: terraform -chdir=infra/terraform fmt -check -diff
+      - name: Init (no backend, no AWS credentials)
+        run: terraform -chdir=infra/terraform init -backend=false
+      - name: Validate
+        run: terraform -chdir=infra/terraform validate
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "v0.55.1"
+      - name: tflint
+        run: tflint --chdir=infra/terraform
 
   parliament:
     name: IAM least-privilege (parliament)

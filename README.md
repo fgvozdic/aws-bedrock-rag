@@ -2,10 +2,11 @@
 
 [![CI](https://github.com/fgvozdic/aws-bedrock-rag/actions/workflows/iac-validate.yml/badge.svg)](https://github.com/fgvozdic/aws-bedrock-rag/actions/workflows/iac-validate.yml)
 
-<!-- CI runs four jobs with NO AWS account and provisions nothing: cfn-lint
-     (strict), checkov (IaC security scan), parliament (IAM least-privilege),
-     and the offline pytest suite. The IaC is the artifact — validated on every
-     push, never deployed. -->
+<!-- CI runs five jobs with NO AWS account and provisions nothing: cfn-lint
+     (strict), terraform fmt/validate + tflint, checkov (security scan of both
+     the CloudFormation and Terraform), parliament (IAM least-privilege), and the
+     offline pytest suite. The IaC is the artifact — validated on every push,
+     never deployed. -->
 
 > **Portfolio demo for security-conscious / enterprise clients.** A document
 > Q&A (RAG) app where the source documents live in your S3, generation runs on
@@ -108,10 +109,15 @@ aws sso login --profile rag-demo
 export AWS_PROFILE=rag-demo          # PowerShell: $env:AWS_PROFILE="rag-demo"
 
 # 2. Provision infra (S3 + KMS + IAM role + log group)
+#    The same infra is provided as both CloudFormation and Terraform — use either.
+#    CloudFormation:
 aws cloudformation deploy \
   --template-file infra/cloudformation.yaml \
   --stack-name rag-demo \
   --capabilities CAPABILITY_NAMED_IAM
+#    or Terraform:
+terraform -chdir=infra/terraform init
+terraform -chdir=infra/terraform apply
 
 # 3. Store the Qdrant API key in SSM Parameter Store (SecureString, free)
 aws ssm put-parameter \
@@ -170,8 +176,9 @@ opposite of the security story. Present it instead as:
    console: Bedrock invocation activity, the CloudWatch audit log, the IAM role.
 2. The safe artifacts published on GitHub: the [IAM policy](infra/iam-policy.json),
    the architecture diagram, the [bucket policy](infra/s3-bucket-policy.json),
-   and the [CloudFormation template](infra/cloudformation.yaml) — account ids and
-   secrets redacted.
+   and the IaC in both [CloudFormation](infra/cloudformation.yaml) and
+   [Terraform](infra/terraform/) — account ids and secrets redacted, every push
+   validated by CI (lint + security scan + IAM least-privilege).
 3. *"There is intentionally no public endpoint. The fact that you can't reach it
    from the open internet is exactly the security property an enterprise wants."*
 
@@ -196,7 +203,9 @@ aws-bedrock-rag/
 │   ├── iam-role.json          # trust policy
 │   ├── iam-policy.json        # least-privilege permission policy
 │   ├── s3-bucket-policy.json  # block public + enforce SSE-KMS + deny non-TLS
-│   ├── cloudformation.yaml    # S3 + KMS + IAM + log group
+│   ├── cloudformation.yaml    # S3 + KMS + IAM + log group (CloudFormation)
+│   ├── terraform/             # same infra as Terraform (main/variables/outputs)
+│   ├── lint_iam.py            # parliament wrapper for the IAM policy CI check
 │   └── setup_notes.md         # manual fallback + prerequisites
 ├── scripts/
 │   ├── upload_docs_to_s3.sh   # sync demo corpus to S3 (SSE-KMS)

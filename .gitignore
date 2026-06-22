@@ -11,3 +11,8 @@ build/
 .mypy_cache/
 .ruff_cache/
 *.log
+
+# Terraform (keep .terraform.lock.hcl tracked)
+.terraform/
+*.tfstate
+*.tfstate.*
