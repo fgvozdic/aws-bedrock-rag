@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AWS Bedrock RAG demo - data plane + identity. Creates the KMS key, the
+  SSE-KMS S3 bucket (block public access + enforce encryption/TLS), the
+  least-privilege IAM role + instance profile, and the CloudWatch log group.
+
+  NOT created here (deliberately):
+    - The Qdrant API key SSM SecureString. CloudFormation's AWS::SSM::Parameter
+      does not support SecureString, so set it once via the CLI:
+        aws ssm put-parameter --name /rag-demo/qdrant-api-key \
+          --value <key> --type SecureString
+      The IAM role below already grants ssm:GetParameter on /rag-demo/*.
+    - The S3 Gateway Endpoint (VPC-specific) - see infra/setup_notes.md.
+    - Bedrock model access - a one-time manual Console step (§0.1).
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: rag-demo-docs
+  LogGroupName:
+    Type: String
+    Default: /rag-demo/app
+
+Resources:
+  RagKmsKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: Customer-managed key for S3 objects + SSM SecureString (rag-demo)
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableRootAccountAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: AllowCloudWatchLogsEncryption
+            Effect: Allow
+            Principal:
+              Service: !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+            Condition:
+              ArnEquals:
+                "kms:EncryptionContext:aws:logs:arn": !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroupName}"
+
+  RagKmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/rag-demo
+      TargetKeyId: !Ref RagKmsKey
+
+  DocsBucket:
+    Type: AWS::S3::Bucket
+    # checkov:skip=CKV_AWS_18: Single-bucket portfolio demo. S3 server access logging
+    #   requires a separate log-target bucket (which itself cannot be access-logged),
+    #   adding cost/complexity beyond the demo's scope. Would be enabled in production.
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref RagKmsKey
+
+  DocsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DocsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyUnencryptedObjectUploads
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:PutObject"
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: "aws:kms"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${BucketName}"
+              - !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Ref LogGroupName
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt RagKmsKey.Arn
+
+  BedrockRagRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bedrock-rag-demo-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: bedrock-rag-demo-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: BedrockInvokeSpecificModels
+                Effect: Allow
+                Action: "bedrock:InvokeModel"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+                  - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+              - Sid: S3ReadDemoDocsOnly
+                Effect: Allow
+                Action: ["s3:GetObject", "s3:ListBucket"]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${BucketName}"
+                  - !Sub "arn:${AWS::Partition}:s3:::${BucketName}/*"
+              - Sid: KmsDecryptForEncryptedData
+                Effect: Allow
+                Action: ["kms:Decrypt", "kms:DescribeKey"]
+                Resource: !GetAtt RagKmsKey.Arn
+              - Sid: SsmGetQdrantApiKey
+                Effect: Allow
+                Action: "ssm:GetParameter"
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/rag-demo/*"
+              - Sid: CloudWatchAppLogs
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/rag-demo/*"
+
+  BedrockRagInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: bedrock-rag-demo-role
+      Roles:
+        - !Ref BedrockRagRole
+
+Outputs:
+  BucketName:
+    Value: !Ref DocsBucket
+  KmsKeyArn:
+    Value: !GetAtt RagKmsKey.Arn
+  RoleArn:
+    Value: !GetAtt BedrockRagRole.Arn
+  LogGroupName:
+    Value: !Ref AppLogGroup

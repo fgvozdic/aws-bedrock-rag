@@ -1,0 +1,6 @@
+streamlit==1.58.0
+boto3==1.40.30
+qdrant-client==1.15.1
+pypdf==6.13.2          # PDF text extraction in the ingestion pipeline
+python-dotenv==1.2.2
+pytest==9.0.3

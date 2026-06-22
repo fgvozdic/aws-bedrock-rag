@@ -1,0 +1,69 @@
+name: CI
+
+# Static validation + offline tests. Runs with NO AWS account and provisions
+# nothing — it validates the IaC that *would* create the infrastructure and runs
+# the fully-mocked test suite. Four independent jobs run in parallel.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cfn-lint:
+    name: CloudFormation lint (strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cfn-lint
+      - name: Lint template at informational severity
+        run: >
+          cfn-lint
+          --include-checks I
+          --non-zero-exit-code informational
+          --format pretty
+          --
+          infra/cloudformation.yaml
+
+  checkov:
+    name: IaC security scan (checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install checkov
+      - name: Scan CloudFormation template
+        run: checkov -f infra/cloudformation.yaml --compact
+
+  parliament:
+    name: IAM least-privilege (parliament)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # parliament still imports the legacy pkg_resources, removed in setuptools 81+
+      - run: pip install parliament "setuptools<81"
+      - name: Lint IAM policy (one documented false positive filtered)
+        run: python infra/lint_iam.py
+
+  tests:
+    name: Unit tests (offline, mocked AWS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Run pytest
+        run: pytest -q

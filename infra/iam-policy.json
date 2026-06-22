@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockInvokeSpecificModels",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0"
+      ]
+    },
+    {
+      "Sid": "S3ReadDemoDocsOnly",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::rag-demo-docs",
+        "arn:aws:s3:::rag-demo-docs/*"
+      ]
+    },
+    {
+      "Sid": "KmsDecryptForEncryptedData",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt", "kms:DescribeKey"],
+      "Resource": "arn:aws:kms:us-east-1:<ACCOUNT_ID>:key/<KMS_KEY_ID>"
+    },
+    {
+      "Sid": "SsmGetQdrantApiKey",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/rag-demo/*"
+    },
+    {
+      "Sid": "CloudWatchAppLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:<ACCOUNT_ID>:log-group:/rag-demo/*"
+    }
+  ]
+}
